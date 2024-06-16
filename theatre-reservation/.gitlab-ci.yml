@@ -1,0 +1,101 @@
+image: php:8.2
+
+stages:
+  - sonar
+  - analysis
+  - testunitaire
+  - testintegration
+  - deploy
+
+variables:
+  SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"  # Defines the location of the analysis task cache
+  GIT_DEPTH: "0"  # Tells git to fetch all the branches of the project, required by the analysis task
+  
+cache:
+  paths:
+    - vendor/
+
+
+phpcs:
+  stage: analysis
+  image: php:latest
+  script:
+    - chmod +x ./vendor/bin/phpcs
+    - ./vendor/bin/phpcs
+  except:
+    - merge_requests
+
+phpstan:
+  stage: analysis
+  image: php:latest
+  script:
+    - chmod +x ./vendor/bin/phpstan
+    - ./vendor/bin/phpstan analyse
+  except:
+    - merge_requests
+
+phpcbf:
+  stage: analysis
+  image: php:latest
+  script:
+    - chmod +x ./vendor/bin/phpcbf
+    - ./vendor/bin/phpcbf
+  except:
+    - merge_requests
+
+testunitaire:
+  stage: testunitaire
+  image: php:latest
+  variables:
+    XDEBUG_MODE: coverage
+  script:
+    - chmod +x ./vendor/bin/phpunit
+    - ./vendor/bin/phpunit --configuration phpunit.xml --testsuite "Unitaire Test"
+  except:
+    - merge_requests
+
+testintegration:
+  stage: testintegration
+  image: php:latest
+  script:
+    - ./vendor/bin/phpunit --configuration phpunit.xml --testsuite "Integration Test"
+  except:
+    - merge_requests
+
+sonarcloud-check:
+  stage: sonar
+  image:
+    name: sonarsource/sonar-scanner-cli:latest
+    entrypoint: [""]
+  cache:
+    key: "${CI_JOB_NAME}"
+    paths:
+      - .sonar/cache
+  script:
+    - sonar-scanner
+      -Dsonar.login=$SONAR_TOKEN
+  variables:
+    GIT_DEPTH: "0"
+
+deploy:
+  stage: deploy
+  image: php:latest
+  before_script:
+    - apt-get update -y
+    - apt-get install -y openssh-client
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts
+  script:
+    - echo "[database]" > config_production.ini
+    - echo "host = $DB_HOST" >> config_production.ini
+    - echo "username = $DB_USERNAME" >> config_production.ini
+    - echo "password = $DB_PASSWORD" >> config_production.ini
+    - echo "dbname = $DB_NAME" >> config_production.ini
+    - php setup_database.php
+    - scp -r * $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH
+  only:
+    - master  
+
+
